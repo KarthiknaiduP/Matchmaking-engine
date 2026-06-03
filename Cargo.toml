@@ -1,0 +1,23 @@
+[package]
+name = "matchmaking-engine"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "matchmaking-engine"
+path = "src/main.rs"
+
+[dependencies]
+axum               = "=0.7.5"
+tokio              = { version = "=1.36.0", features = ["full"] }
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+uuid               = { version = "=1.7.0", features = ["v4"] }
+parking_lot        = "0.12"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level     = 3
+lto           = true
+codegen-units = 1

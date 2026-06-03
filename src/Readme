@@ -1,0 +1,10 @@
+└── src/
+    ├── main.rs         (wires everything, spawns workers, starts axum)
+    ├── models.rs       (Player, MatchRecord, all request/response types, constants)
+constants
+    ├── pool.rs         (BTreeMap-backed PlayerPool, range scan, atomic eviction)
+    ├── balance.rs      (sort-and-alternate team balancing)
+    ├── metrics.rs      (AtomicU64 counters, running avg MMR diff)
+    ├── state.rs        (AppState (Arc wrappers shared by HTTP + workers))
+    ├── worker.rs       (the matching loop on OS threads)
+    └── handlers.rs     (POST /queue, GET /metrics, GET /matches, GET /health)

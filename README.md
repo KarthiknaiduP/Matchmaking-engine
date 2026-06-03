@@ -65,14 +65,14 @@ The initial window of 150 was chosen because at 1200 median MMR, a ±150 spread 
 
 The pool is wrapped in `Arc<parking_lot::RwLock<PlayerPool>>`. I chose `parking_lot::RwLock` over `std::sync::RwLock` for two reasons: it uses adaptive spinning under contention (faster on high-core counts) and it doesn't poison on panic (a panicking writer won't permanently break the lock for every future reader).
 
-The RwLock semantics matter: N workers can hold the read lock simultaneously while scanning for candidates. The write lock is only taken when evicting matched players. This means most of the time — when workers are scanning but not yet ready to commit a match — they don't block each other at all.
+The RwLock semantics matter: N workers can hold the read lock simultaneously while scanning for candidates. The write lock is only taken when evicting matched players. This means most of the time when workers are scanning but not yet ready to commit a match so they don't block each other at all.
 
 The eviction itself is atomic by design:
 
 1. Acquire **read lock** → find 10 candidate IDs → drop lock
 2. Acquire **write lock** → re-verify all 10 still exist → remove them → drop lock
 
-The re-verify step in stage 2 is critical. Without it you get a TOCTOU (time-of-check-to-time-of-use) race: two workers could each see the same player under their respective read locks, both decide to include them, and both try to put them in a match. Re-verifying under the write lock makes eviction truly atomic — if even one player was grabbed by another worker, the whole attempt aborts and retries.
+The re-verify step in stage 2 is critical. Without it you get a TOCTOU (time-of-check-to-time-of-use) race: two workers could each see the same player under their respective read locks, both decide to include them, and both try to put them in a match. Re-verifying under the write lock makes eviction truly atomic, if even one player was grabbed by another worker, the whole attempt aborts and retries.
 
 ### 3. Time-based constraint relaxation
 
@@ -87,7 +87,7 @@ pub fn current_window(&self) -> u32 {
 
 The worker always uses the real-time window at scan time, not the window from when the player joined. This means a player who joined 90 seconds ago is automatically scanned with ±250 even if the worker hasn't seen them before.
 
-The anchor selection — picking the longest-waiting player as the starting point for each scan — ensures fairness. A worker won't keep re-matching fresh players while a veteran waits. The queue is effectively priority-ordered by wait time.
+The anchor selection picks the longest-waiting player as the starting point for each scan ensuring fairness. A worker won't keep re-matching fresh players while a veteran waits. The queue is effectively priority-ordered by wait time.
 
 ### 4. Team balance
 
@@ -102,9 +102,9 @@ Team B:         1900,       1700,       1500,       1300, 1100  = 8500 avg 1700
 Diff:     100 MMR
 ```
 
-I considered the DP approach (exact optimal partition) but rejected it for this case. The partition problem on 10 elements with MMR values is bounded — the greedy sort-and-alternate gets within a few percent of optimal and runs in O(n log n) vs O(n × sum) for DP. More importantly, the greedy result is easy to reason about: the two teams are structurally mirror images of each other, which players find intuitive.
+I considered the DP approach (exact optimal partition) but rejected it for this case. The partition problem on 10 elements with MMR values is bounded by the greedy sort-and-alternate gets within a few percent of optimal and runs in O(n log n) vs O(n × sum) for DP. More importantly, the greedy result is easy to reason about: the two teams are structurally mirror images of each other, which players find intuitive.
 
-In practice, with the ±150–±250 MMR windows we're working with, the worst-case team imbalance is well under 200 MMR — which is less than the spread within a team itself.
+In practice, with the ±150–±250 MMR windows we're working with, the worst-case team imbalance is well under 200 MMR which is less than the spread within a team itself.
 
 ### 5. Low-latency health metrics
 
@@ -143,7 +143,7 @@ A single `RwLock<PlayerPool>` is a serialization point for writes. At 100k+ play
 
 **Multi-machine deployment**
 
-A second machine can't see this machine's in-memory pool. To scale horizontally you'd move the pool to a shared store (Redis with sorted sets — `ZRANGEBYSCORE` maps cleanly to the BTreeMap range scan). Workers become stateless consumers that pop player groups from Redis, balance teams, and emit match events to a message queue (Kafka or Redis Streams). The HTTP tier also becomes stateless — any machine can accept a `/queue` POST and write to Redis.
+A second machine can't see this machine's in-memory pool. To scale horizontally you'd move the pool to a shared store (Redis with sorted sets — `ZRANGEBYSCORE` maps cleanly to the BTreeMap range scan). Workers become stateless consumers that pop player groups from Redis, balance teams, and emit match events to a message queue (Kafka or Redis Streams). The HTTP tier also becomes stateless and any machine can accept a `/queue` POST and write to Redis.
 
 **The O(n) ID lookup**
 
@@ -152,3 +152,70 @@ As mentioned above, a `HashMap<String, u32>` index mapping `player_id → mmr` w
 **Worker count**
 
 The current `NUM_WORKERS = 4` constant is a decent default for a 4-core machine. On a 32-core production box you'd want more workers but benchmark first — adding workers past the point where RwLock write contention dominates doesn't help and adds context-switch overhead.
+
+
+-----
+
+## Result
+
+By Running the simulation.py
+
+════════════════════════════════════════════════════════════
+  Matchmaking Engine — Load Simulation
+════════════════════════════════════════════════════════════
+  Players     : 5,000
+  Concurrency : 200
+  Target      : http://localhost:3000
+════════════════════════════════════════════════════════════
+
+  Server is up ✓
+
+    10%  injected     500 / 5,000  ok=500
+    20%  injected   1,000 / 5,000  ok=1000
+    30%  injected   1,500 / 5,000  ok=1500
+    40%  injected   2,000 / 5,000  ok=2000
+    50%  injected   2,500 / 5,000  ok=2500
+    60%  injected   3,000 / 5,000  ok=3000
+    70%  injected   3,500 / 5,000  ok=3500
+    80%  injected   4,000 / 5,000  ok=4000
+    90%  injected   4,500 / 5,000  ok=4500
+   100%  injected   5,000 / 5,000  ok=5000
+
+════════════════════════════════════════════════════════════
+  Injection complete in 1.91s
+────────────────────────────────────────────────────────────
+  Successful  : 5,000 / 5,000
+  Failed      : 0
+────────────────────────────────────────────────────────────
+  Latency (queue endpoint)
+    mean : 66.9 ms
+    p50  : 65.0 ms
+    p95  : 81.4 ms
+    p99  : 110.4 ms
+    max  : 123.1 ms
+────────────────────────────────────────────────────────────
+  Throughput : 2617 req/s
+
+────────────────────────────────────────────────────────────
+  Polling /metrics every 2.0s for 30s
+────────────────────────────────────────────────────────────
+    Time    Queue   Matches    Matched   Avg Diff
+────────────────────────────────────────────────────────────
+    0.0s     4750        25        250        7.1
+    2.0s     4750        25        250        7.1
+    4.0s     4750        25        250        7.1
+    6.0s     4750        25        250        7.1
+    8.0s     4750        25        250        7.1
+   10.0s     4750        25        250        7.1
+   12.0s     4750        25        250        7.1
+   14.0s     4750        25        250        7.1
+   16.0s     4750        25        250        7.1
+   18.0s     4750        25        250        7.1
+   20.0s     4750        25        250        7.1
+   22.0s     4750        25        250        7.1
+   24.0s     4750        25        250        7.1
+   26.0s     4750        25        250        7.1
+   28.0s     4750        25        250        7.1
+════════════════════════════════════════════════════════════
+  Done.
+════════════════════════════════════════════════════════════

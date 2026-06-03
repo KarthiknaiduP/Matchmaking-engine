@@ -7,7 +7,7 @@ A high-performance 5v5 matchmaking engine written in Rust. Holds players in memo
 ## Running it
 
 ```bash
-# Start the server (release build — ~5x faster than debug)
+# Start the server
 cargo run --release
 
 # In another terminal, inject 5000 players
@@ -26,7 +26,7 @@ Endpoints:
 | Method | Path       | Description                          |
 |--------|------------|--------------------------------------|
 | POST   | `/queue`   | Add a player to the matchmaking pool |
-| GET    | `/metrics` | Live counters — queue size, match rate, avg MMR diff |
+| GET    | `/metrics` | Live counters like queue size, match rate, avg MMR diff |
 | GET    | `/matches` | Last 20 completed matches            |
 | GET    | `/health`  | Liveness probe                       |
 
@@ -51,13 +51,13 @@ The core tension: matching fast means accepting mismatched players; matching wel
 The solution is time-based window relaxation. Every player enters the queue with a base MMR window of ±150. Every 30 seconds they wait, the window expands by ±50:
 
 ```
-t = 0s   → ±150  (tight — only well-matched opponents)
+t = 0s   → ±150  (tight: only well-matched opponents)
 t = 30s  → ±200
 t = 60s  → ±250
-t = 5min → ±650  (effectively open queue — someone will match)
+t = 5min → ±650  (effectively open queue for someone to match)
 ```
 
-Workers always scan starting from the longest-waiting player as the anchor. This means a fringe player (very high or very low MMR) won't wait indefinitely — their window just keeps growing until someone fits.
+Workers always scan starting from the longest-waiting player as the anchor. This means a fringe player (very high or very low MMR) won't wait indefinitely  their window just keeps growing until someone fits.
 
 The initial window of 150 was chosen because at 1200 median MMR, a ±150 spread means the worst team composition has about a 300 MMR gap between its strongest and weakest player. That's tight enough to feel fair but wide enough that matches form within a few seconds under normal load.
 
@@ -108,7 +108,7 @@ In practice, with the ±150–±250 MMR windows we're working with, the worst-ca
 
 ### 5. Low-latency health metrics
 
-Every counter in the `Metrics` struct is an `AtomicU64`. Atomic operations are implemented as a single CPU instruction (e.g. `LOCK XADD` on x86) — there is no mutex, no kernel call, no scheduler involvement. A worker incrementing `total_matched` cannot block an HTTP handler reading `matches_made`. The `/metrics` endpoint only acquires one read lock (to read `queue_size`) and reads everything else lock-free.
+Every counter in the `Metrics` struct is an `AtomicU64`. Atomic operations are implemented as a single CPU instruction (e.g. `LOCK XADD` on x86) there is no mutex, no kernel call, no scheduler involvement. A worker incrementing `total_matched` cannot block an HTTP handler reading `matches_made`. The `/metrics` endpoint only acquires one read lock (to read `queue_size`) and reads everything else lock-free.
 
 For the running average MMR diff I track a `mmr_diff_sum` and `diff_count` pair. Dividing on read gives the current average without storing per-match history. Memory usage for metrics is O(1) regardless of how many matches have been made.
 
@@ -125,7 +125,7 @@ For the running average MMR diff I track a `mmr_diff_sum` and `diff_count` pair.
 | Atomic eviction        | O(n × m)       | O(m)    | m evictions, each O(n) removal              |
 | Team balance           | O(m log m)     | O(m)    | Sort m=10 players                           |
 | Metrics read           | O(1)           | O(1)    | AtomicU64 loads, one pool read lock         |
-| Total pool memory      | O(n)           | —       | n = players currently in queue              |
+| Total pool memory      | O(n)           |        | n = players currently in queue              |
 
 Where n = total players in pool, k = players in the scanned MMR window, m = match size (10).
 
@@ -143,7 +143,7 @@ A single `RwLock<PlayerPool>` is a serialization point for writes. At 100k+ play
 
 **Multi-machine deployment**
 
-A second machine can't see this machine's in-memory pool. To scale horizontally you'd move the pool to a shared store (Redis with sorted sets — `ZRANGEBYSCORE` maps cleanly to the BTreeMap range scan). Workers become stateless consumers that pop player groups from Redis, balance teams, and emit match events to a message queue (Kafka or Redis Streams). The HTTP tier also becomes stateless and any machine can accept a `/queue` POST and write to Redis.
+A second machine can't see this machine's in-memory pool. To scale horizontally you'd move the pool to a shared store (Redis with sorted sets  `ZRANGEBYSCORE` maps cleanly to the BTreeMap range scan). Workers become stateless consumers that pop player groups from Redis, balance teams, and emit match events to a message queue (Kafka or Redis Streams). The HTTP tier also becomes stateless and any machine can accept a `/queue` POST and write to Redis.
 
 **The O(n) ID lookup**
 
@@ -151,7 +151,7 @@ As mentioned above, a `HashMap<String, u32>` index mapping `player_id → mmr` w
 
 **Worker count**
 
-The current `NUM_WORKERS = 4` constant is a decent default for a 4-core machine. On a 32-core production box you'd want more workers but benchmark first — adding workers past the point where RwLock write contention dominates doesn't help and adds context-switch overhead.
+The current `NUM_WORKERS = 4` constant is a decent default for a 4-core machine. On a 32-core production box you'd want more workers but benchmark first adding workers past the point where RwLock write contention dominates doesn't help and adds context-switch overhead.
 
 
 -----

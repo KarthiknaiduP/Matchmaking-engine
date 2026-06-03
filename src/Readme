@@ -1,4 +1,4 @@
-└── src/
+## src/
     ├── main.rs         (wires everything, spawns workers, starts axum)
     ├── models.rs       (Player, MatchRecord, all request/response types, constants)
 constants
